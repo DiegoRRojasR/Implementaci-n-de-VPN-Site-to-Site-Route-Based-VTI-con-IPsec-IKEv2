@@ -1,0 +1,212 @@
+PC-A
+ip 10.9.18.10/24 10.9.18.1
+
+PC-B
+ip 10.9.19.10/24 10.9.19.1
+
+------------------------------------------------------
+
+ISP
+
+conf t
+hostname ISP
+no ip domain-lookup
+
+interface g0/0
+ ip address 172.16.9.2 255.255.255.252
+ no shut
+interface g0/1
+ ip address 172.16.9.25 255.255.255.252
+ no shut
+
+! Rutas hacia el otro lado (R2 y su WAN)
+ip route 172.16.9.4 255.255.255.252 172.16.9.26
+end
+wr mem
+
+------------------------------------------------------
+
+CORE
+
+conf t
+hostname CORE
+no ip domain-lookup
+
+interface g0/0
+ ip address 172.16.9.26 255.255.255.252
+ no shut
+interface g0/1
+ ip address 172.16.9.29 255.255.255.252
+ no shut
+
+! Rutas hacia cada extremo
+ip route 172.16.9.0 255.255.255.252 172.16.9.25
+ip route 172.16.9.4 255.255.255.252 172.16.9.30
+end
+wr mem
+
+------------------------------------------------------
+
+ISP2
+
+conf t
+hostname ISP2
+no ip domain-lookup
+
+interface g0/0
+ ip address 172.16.9.30 255.255.255.252
+ no shut
+interface g0/1
+ ip address 172.16.9.6 255.255.255.252
+ no shut
+
+! Rutas hacia el otro lado (R1 y su WAN)
+ip route 172.16.9.0 255.255.255.252 172.16.9.29
+end
+wr mem
+
+------------------------------------------------------
+
+R1
+
+conf t
+hostname R1-VTI-IKEv2
+no ip domain-lookup
+
+interface g0/0
+ ip address 172.16.9.1 255.255.255.252
+ no shut
+interface g0/1
+ ip address 10.9.18.1 255.255.255.0
+ no shut
+
+! Ruta hacia la WAN remota (para alcanzar 172.16.9.5 por la cadena ISP/CORE/ISP2)
+ip route 172.16.9.4 255.255.255.252 172.16.9.2
+
+end
+wr mem
+
+------------------------------------------------------
+
+R2
+
+conf t
+hostname R2-VTI-IKEv2
+no ip domain-lookup
+
+interface g0/0
+ ip address 172.16.9.5 255.255.255.252
+ no shut
+interface g0/1
+ ip address 10.9.19.1 255.255.255.0
+ no shut
+
+! Ruta hacia la WAN remota (para alcanzar 172.16.9.1)
+ip route 172.16.9.0 255.255.255.252 172.16.9.6
+
+end
+wr mem
+
+------------------------------------------------------
+
+Configuración IKEv2 R1
+
+conf t
+
+crypto ikev2 proposal IKEV2-PROP
+ encryption aes-cbc-256
+ integrity sha256
+ group 14
+
+crypto ikev2 policy IKEV2-POL
+ proposal IKEV2-PROP
+
+crypto ikev2 keyring KR
+ peer R2
+  address 172.16.9.5
+  pre-shared-key C1sco-0918
+
+crypto ikev2 profile IKEV2-PROF
+ match identity remote address 172.16.9.5 255.255.255.255
+ authentication local pre-share
+ authentication remote pre-share
+ keyring local KR
+
+crypto ipsec transform-set TS esp-aes 256 esp-sha256-hmac
+ mode tunnel
+
+crypto ipsec profile IPSEC-PROF
+ set transform-set TS
+ set ikev2-profile IKEV2-PROF
+
+interface Tunnel10
+ ip address 10.255.9.1 255.255.255.252
+ tunnel source g0/0
+ tunnel destination 172.16.9.5
+ tunnel mode ipsec ipv4
+ tunnel protection ipsec profile IPSEC-PROF
+
+! Enrutamiento hacia LAN remota por el túnel (route-based)
+ip route 10.9.19.0 255.255.255.0 Tunnel10
+end
+wr mem
+
+------------------------------------------------------
+
+Configuración IKEv2 R2
+
+conf t
+
+crypto ikev2 proposal IKEV2-PROP
+ encryption aes-cbc-256
+ integrity sha256
+ group 14
+
+crypto ikev2 policy IKEV2-POL
+ proposal IKEV2-PROP
+
+crypto ikev2 keyring KR
+ peer R1
+  address 172.16.9.1
+  pre-shared-key C1sco-0918
+
+crypto ikev2 profile IKEV2-PROF
+ match identity remote address 172.16.9.1 255.255.255.255
+ authentication local pre-share
+ authentication remote pre-share
+ keyring local KR
+
+crypto ipsec transform-set TS esp-aes 256 esp-sha256-hmac
+ mode tunnel
+
+crypto ipsec profile IPSEC-PROF
+ set transform-set TS
+ set ikev2-profile IKEV2-PROF
+
+interface Tunnel10
+ ip address 10.255.9.2 255.255.255.252
+ tunnel source g0/0
+ tunnel destination 172.16.9.1
+ tunnel mode ipsec ipv4
+ tunnel protection ipsec profile IPSEC-PROF
+
+ip route 10.9.18.0 255.255.255.0 Tunnel10
+end
+wr mem
+
+------------------------------------------------------
+
+Activar y probar (LAN a LAN)
+
+Desde PC-A:
+
+ping 10.9.19.10
+
+------------------------------------------------------
+
+Confirmaciones
+
+show crypto ikev2 sa
+show crypto ipsec sa
+show interface tunnel10
+show ip route | include 10.9.1
